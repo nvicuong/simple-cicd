@@ -1,0 +1,183 @@
+pipeline {
+    agent {
+        label 'lab-server'
+    }
+    environment {
+    WORKSPACE_DIR = ""
+    PROJECT_USER = "onlineshop"
+    JFROG_PROJECT_NAME = "online-shop"
+    CI_REGISTRY_PROJECT = "onlineshop"
+    FE_PORT = 3000
+    DOCKER_EXPOSE_PORT = 80
+    SNYK_IMAGE = "kakarazi/snyk"
+    CI_COMMIT_TAG = ""
+    CI_COMMIT_SHORT_SHA = ""
+    CI_COMMIT_REF_NAME = ""
+    CI_PROJECT_NAME = ""
+    DOCKER_IMAGE_NAME_AND_TAG = ""
+    SNYKSCAN_REPORT = ""
+    TRIVYFS_REPORT = ""
+    TRIVY_IMAGE_REPORT = ""
+    ARACHNI_WEBSITE_REPORT = ""
+    K6_PERFORMACE_TEST_REPORT = ""
+    }
+    stages {
+        stage('get information project') {
+            steps {
+                script {
+                    CI_PROJECT_NAME = sh(script: """ git remote show origin -n | grep Fetch | cut -d'/' -f5 | cut -d'.' -f1""", returnStdout: true).trim()
+                    CI_COMMIT_REF_NAME = sh(script: """git rev-parse --abbrev-ref HEAD""", returnStdout: true).trim()
+                    def CI_COMMIT_HASH = sh(script: """git rev-parse HEAD""", returnStdout: true).trim()
+
+                    CI_COMMIT_SHORT_SHA = CI_COMMIT_HASH.take(8)
+
+                    CI_COMMIT_TAG = sh(script: """git describe --tags --exact-match ${CI_COMMIT_HASH}""", returnStdout: true).trim()
+
+                    WORKSPACE_DIR = sh(script: "pwd", returnStdout: true).trim()
+
+                    DOCKER_IMAGE_NAME_AND_TAG = "${CI_REGISTRY_URL}/${CI_REGISTRY_PROJECT}/${CI_PROJECT_NAME}:${CI_COMMIT_SHORT_SHA}-${CI_COMMIT_TAG}"
+                    SNYKSCAN_REPORT = "snyk_scan_${CI_PROJECT_NAME}_${CI_COMMIT_REF_NAME}_${CI_COMMIT_SHORT_SHA}_report"
+                    TRIVYFS_REPORT = "trivyfs_scan_${CI_PROJECT_NAME}_${CI_COMMIT_REF_NAME}_${CI_COMMIT_SHORT_SHA}_report"
+                    TRIVY_IMAGE_REPORT = "security_scan_image_${CI_PROJECT_NAME}_${CI_COMMIT_REF_NAME}_${CI_COMMIT_SHORT_SHA}_report"
+                    ARACHNI_WEBSITE_REPORT = "arachni_website_scan_${CI_PROJECT_NAME}_${CI_COMMIT_REF_NAME}_${CI_COMMIT_SHORT_SHA}_report"
+                    K6_PERFORMACE_TEST_REPORT = "performace_test_${CI_PROJECT_NAME}_${CI_COMMIT_REF_NAME}_${CI_COMMIT_SHORT_SHA}_report"
+
+                    
+                }
+            }
+        }
+
+stage('build') {
+            steps {
+
+                sh(script: """docker build -t ${DOCKER_IMAGE_NAME_AND_TAG} .""")
+            }
+        }
+
+        stage('trivyfs scan') {
+            steps {
+                sh(script: """docker run --rm -v ${WORKSPACE_DIR}:/${CI_PROJECT_NAME} -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy fs /${CI_PROJECT_NAME} --severity HIGH,CRITICAL --format template --template "@contrib/html.tpl" --output /${CI_PROJECT_NAME}/${TRIVYFS_REPORT}.html""")
+                sh(script: """sudo chown -R jenkins ${WORKSPACE_DIR}""")
+                sh(script: """ls""")
+            }
+        }
+
+        stage('snyk scan') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'DOCKERHUB_CREDENTIAL', usernameVariable: 'REGISTRY_USER', passwordVariable: 'REGISTRY_PASS')]) {
+                        sh(script: """docker login -u ${REGISTRY_USER} -p ${REGISTRY_PASS} docker.io""")
+                    }
+                withCredentials([string(credentialsId: 'SNYK_AUTH_TOKEN', variable: 'SNYK_AUTH_TOKEN')]) {
+                    sh(script: """docker run --name ${SNYKSCAN_REPORT} -v ${WORKSPACE_DIR}:/app ${SNYK_IMAGE} sh -c 'cd /app; ls ; snyk auth ${SNYK_AUTH_TOKEN} && snyk test --json | snyk-to-html -o ${SNYKSCAN_REPORT}.html || true'""")
+                }
+
+                sh(script: """docker cp ${SNYKSCAN_REPORT}:/app/${SNYKSCAN_REPORT}.html .""")
+                sh(script: """docker rm ${SNYKSCAN_REPORT}""")
+                sh(script: """docker logout docker.io""")
+                sh(script: """sudo chown -R jenkins ${WORKSPACE_DIR}""")
+                sh(script: """ls""")
+            }
+        }
+
+        stage('trivy scan image') {
+            options {
+                skipDefaultCheckout(true)
+            }
+            steps {
+                sh(script: """docker run --rm -v ${WORKSPACE_DIR}:/${CI_PROJECT_NAME} -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy clean --all""")
+                sh(script: """docker run --rm -v ${WORKSPACE_DIR}:/${CI_PROJECT_NAME} -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy image --format template --template "@contrib/html.tpl" --output /${CI_PROJECT_NAME}/${TRIVY_IMAGE_REPORT}.html ${DOCKER_IMAGE_NAME_AND_TAG}""")
+                sh(script: """sudo chown -R jenkins ${WORKSPACE_DIR}""")
+                sh(script: """ls""")
+            }
+        }
+
+        stage('push') {
+            options {
+                skipDefaultCheckout(true)
+            }
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'CI_REGISTRY_CREDENTIAL', usernameVariable: 'CI_REGISTRY_USER', passwordVariable: 'CI_REGISTRY_PASS')]) {
+                        sh(script: """docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASS} ${CI_REGISTRY_URL}""")
+                    }
+
+                sh(script: """docker push ${DOCKER_IMAGE_NAME_AND_TAG}""")
+                sh(script: """docker logout ${CI_REGISTRY_URL}""")
+            }    
+        }
+
+        stage('deploy') {
+            options {
+                skipDefaultCheckout(true)
+            }
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'CI_REGISTRY_CREDENTIAL', usernameVariable: 'CI_REGISTRY_USER', passwordVariable: 'CI_REGISTRY_PASS')]) {
+                        sh(script: """docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASS} ${CI_REGISTRY_URL}""")
+                    }
+
+                sh(script: """sudo su ${PROJECT_USER} -c 'docker pull ${DOCKER_IMAGE_NAME_AND_TAG}; docker rm -f ${CI_PROJECT_NAME}; docker run --name ${CI_PROJECT_NAME} -dp ${FE_PORT}:${DOCKER_EXPOSE_PORT} ${DOCKER_IMAGE_NAME_AND_TAG} '""")
+                sh(script: """docker logout ${CI_REGISTRY_URL}""")
+            }
+        }
+
+        stage('arachni scan website') {
+            options {
+                skipDefaultCheckout(true)
+            }
+
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'DOCKERHUB_CREDENTIAL', usernameVariable: 'REGISTRY_USER', passwordVariable: 'REGISTRY_PASS')]) {
+                        sh(script: """docker login -u ${REGISTRY_USER} -p ${REGISTRY_PASS} docker.io""")
+                    }
+                withCredentials([string(credentialsId: 'FRONTEND_URL', variable: 'FRONTEND_URL')]) {
+                sh(script: """docker run --rm -v /tmp/:/tmp/ kakarazi/arachni:v1.4 bin/arachni --output-verbose --scope-include-subdomains ${FRONTEND_URL} --report-save-path=/tmp/${ARACHNI_WEBSITE_REPORT}.afr > /dev/null 2>&1""")
+                    }
+                sh(script: """docker run --rm -v /tmp/:/tmp/ kakarazi/arachni:v1.4 bin/arachni_reporter  /tmp/${ARACHNI_WEBSITE_REPORT}.afr --reporter=html:outfile=/tmp/${ARACHNI_WEBSITE_REPORT}.html.zip""")
+                sh(script: """sudo chmod 777 /tmp/${ARACHNI_WEBSITE_REPORT}.html.zip""")
+                sh(script: """cp /tmp/${ARACHNI_WEBSITE_REPORT}.html.zip .""")
+                sh(script: """sudo chown -R jenkins ${WORKSPACE_DIR}""")
+                sh(script: """ls""")
+                sh(script: """docker logout docker.io""")
+            }
+        }
+        stage('performance testing') {
+            steps {
+                script {
+                    withCredentials([string(credentialsId: 'FRONTEND_URL', variable: 'FRONTEND_URL')]) {
+                        sh(script: """docker run --rm -v ${WORKSPACE_DIR}/performace_testing_script:/performace_testing_script -e BASE_URL=${FRONTEND_URL} loadimpact/k6 run /performace_testing_script/smoke-test.js""") 
+                        }
+
+                    sh(script: """mv ${WORKSPACE_DIR}/performace_testing_script/summary.html ${WORKSPACE_DIR}/${K6_PERFORMACE_TEST_REPORT}.html""")
+                    sh(script: """sudo chown -R jenkins ${WORKSPACE_DIR}""")
+                }
+            }
+        }
+
+        stage('send reports') {
+            steps {
+                script {
+                    withCredentials([
+                        string(credentialsId: 'TELE_AUTH_TOKEN', variable: 'TELE_AUTH_TOKEN'),
+                        string(credentialsId: 'TELE_GROUP_ID', variable: 'TELE_GROUP_ID')
+                    ]) {
+                        sh(script: """ls -lsa""")
+                        sh(script: """curl -F "chat_id=${TELE_GROUP_ID}" \
+                            -F "media=[{\\"type\\": \\"document\\", \\"media\\": \\"attach://file1\\"}, \
+                                        {\\"type\\": \\"document\\", \\"media\\": \\"attach://file2\\"}, \
+                                        {\\"type\\": \\"document\\", \\"media\\": \\"attach://file3\\"}, \
+                                        {\\"type\\": \\"document\\", \\"media\\": \\"attach://file4\\"},
+                                        {\\"type\\": \\"document\\", \\"media\\": \\"attach://file5\\"}]" \
+                            -F "file1=@${WORKSPACE_DIR}/${SNYKSCAN_REPORT}.html" \
+                            -F "file2=@${WORKSPACE_DIR}/${TRIVY_IMAGE_REPORT}.html" \
+                            -F "file3=@${WORKSPACE_DIR}/${TRIVYFS_REPORT}.html" \
+                            -F "file4=@${WORKSPACE_DIR}/${ARACHNI_WEBSITE_REPORT}.html.zip" \
+                            -F "file5=@${WORKSPACE_DIR}/${K6_PERFORMACE_TEST_REPORT}.html" \
+                            "https://api.telegram.org/bot${TELE_AUTH_TOKEN}/sendMediaGroup"
+                        """)
+
+                    }
+
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,163 @@
+variables:
+    PROJECT_USER: "onlineshop"
+    DOCKER_IMAGE_NAME_AND_TAG: "${CI_REGISTRY_URL}/${CI_REGISTRY_PROJECT}/${CI_PROJECT_NAME}:${CI_COMMIT_SHORT_SHA}-${CI_COMMIT_TAG}"
+    DOCKER_EXPOSE_PORT: 80
+    SNYK_IMAGE: "kakarazi/snyk"
+    SNYKSCAN_REPORT: "snyk_scan_${CI_PROJECT_NAME}_${CI_COMMIT_REF_NAME}_${CI_COMMIT_SHORT_SHA}_report"
+    TRIVYFS_REPORT: "trivyfs_scan_${CI_PROJECT_NAME}_${CI_COMMIT_REF_NAME}_${CI_COMMIT_SHORT_SHA}_report"
+    TRIVY_IMAGE_REPORT: "security_scan_image_${CI_PROJECT_NAME}_${CI_COMMIT_REF_NAME}_${CI_COMMIT_SHORT_SHA}_report"
+    ARACHNI_WEBSITE_REPORT: "arachni_website_scan_${CI_PROJECT_NAME}_${CI_COMMIT_REF_NAME}_${CI_COMMIT_SHORT_SHA}_report"
+    K6_PERFORMACE_TEST_REPORT: "performace_test_${CI_PROJECT_NAME}_${CI_COMMIT_REF_NAME}_${CI_COMMIT_SHORT_SHA}_report"
+
+
+stages:
+    - build
+    - test source code
+    - security scan image
+    - push
+    - deploy
+    - security scan website
+    - performance testing
+
+build:
+    variables:
+        GIT_STRATEGY: clone
+    stage: build
+    before_script:
+        - docker login -u ${CI_REGISTRY_USER} -p "${CI_REGISTRY_PASSWORD}" ${CI_REGISTRY_URL}
+    script:
+        - docker build -t ${DOCKER_IMAGE_NAME_AND_TAG} .
+    after_script:
+        - docker logout ${CI_REGISTRY_URL}
+    tags:
+        - build-shell
+    only:
+        - tags
+
+trivyfs scan:
+    stage: test source code
+    variables:
+        GIT_STRATEGY: clone
+    script:
+        - docker run --rm -v $PWD:/${CI_PROJECT_NAME} -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy fs /${CI_PROJECT_NAME} --severity HIGH,CRITICAL --format template --template "@contrib/html.tpl" --output /${CI_PROJECT_NAME}/$TRIVYFS_REPORT.html
+    after_script:
+        - sudo chown -R gitlab-runner $(pwd)
+    tags:
+        - build-shell
+    only:
+        - tags
+    artifacts:
+        paths:
+        - $TRIVYFS_REPORT.html
+        expire_in: 1 day
+
+snyk scan:
+    variables:
+      GIT_STRATEGY: clone
+    stage: test source code
+    before_script:
+        - docker login -u ${DOCKERHUB_USER} -p "${DOCKERHUB_PASSWORD}" docker.io
+    script:
+      - docker run --name $SNYKSCAN_REPORT -v $PWD:/app ${SNYK_IMAGE} sh -c "cd /app; ls ; snyk auth ${SNYK_AUTH_TOKEN} && snyk test --json | snyk-to-html -o $SNYKSCAN_REPORT.html || true"
+      - docker cp $SNYKSCAN_REPORT:/app/$SNYKSCAN_REPORT.html .
+      - docker rm $SNYKSCAN_REPORT
+    after_script:
+        - docker logout docker.io
+        - sudo chown -R gitlab-runner $(pwd)
+    tags:
+        - build-shell
+    only:
+        - tags
+    artifacts:
+      paths:
+        - ${SNYKSCAN_REPORT}.html
+      expire_in: 1 day
+
+trivy scan image:
+    stage: security scan image
+    variables:
+        GIT_STRATEGY: none
+    script:
+        - docker run --rm -v $(pwd):/${CI_PROJECT_NAME} -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy clean --all
+        - docker run --rm -v $(pwd):/${CI_PROJECT_NAME} -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy image --format template --template "@contrib/html.tpl" --output /${CI_PROJECT_NAME}/${TRIVY_IMAGE_REPORT}.html ${DOCKER_IMAGE_NAME_AND_TAG}
+        - sudo chown -R $USER:$USER .
+    after_script:
+        - sudo chown -R gitlab-runner $(pwd)
+    tags:
+        - build-shell
+    only:
+        - tags
+    artifacts:
+        paths:
+        - ${TRIVY_IMAGE_REPORT}.html
+        expire_in: 1 day
+
+
+push:
+    variables:
+        GIT_STRATEGY: none
+    stage: push
+    before_script:
+        - docker login -u ${CI_REGISTRY_USER} -p "${CI_REGISTRY_PASSWORD}" ${CI_REGISTRY_URL}
+    script:
+        - docker push ${DOCKER_IMAGE_NAME_AND_TAG}
+    after_script:
+        - docker logout ${CI_REGISTRY_URL}
+    tags:
+        - build-shell
+    only:
+        - tags
+
+deploy:
+    variables:
+        GIT_STRATEGY: none
+    stage: deploy
+    before_script:
+        - docker login -u ${CI_REGISTRY_USER} -p "${CI_REGISTRY_PASSWORD}" ${CI_REGISTRY_URL}
+    script:
+        - sudo su ${PROJECT_USER} -c "docker pull ${DOCKER_IMAGE_NAME_AND_TAG}; docker rm -f ${CI_PROJECT_NAME}; docker run --name ${CI_PROJECT_NAME} -dp ${FE_PORT}:${DOCKER_EXPOSE_PORT} ${DOCKER_IMAGE_NAME_AND_TAG} "
+    after_script:
+        - docker logout ${CI_REGISTRY_URL}
+    tags:
+        - build-shell
+    only:
+        - tags
+
+arachni scan website:
+    stage: security scan website
+    variables:
+        GIT_STRATEGY: none
+    script:
+        - docker run --rm -v /tmp/:/tmp/ kakarazi/arachni:v1.4 bin/arachni --output-verbose --scope-include-subdomains ${FRONTEND_URL} --report-save-path=/tmp/${ARACHNI_WEBSITE_REPORT}.afr > /dev/null 2>&1
+        - docker run --rm -v /tmp/:/tmp/ kakarazi/arachni:v1.4 bin/arachni_reporter  /tmp/${ARACHNI_WEBSITE_REPORT}.afr --reporter=html:outfile=/tmp/${ARACHNI_WEBSITE_REPORT}.html.zip
+        - sudo chmod 777 /tmp/${ARACHNI_WEBSITE_REPORT}.html.zip
+        - cp /tmp/${ARACHNI_WEBSITE_REPORT}.html.zip .
+    after_script:
+        - sudo chown -R gitlab-runner $(pwd)
+    tags:
+        - build-shell
+    only:
+        - tags
+    artifacts:
+        paths:
+        - ${ARACHNI_WEBSITE_REPORT}.html.zip
+        expire_in: 1 day
+
+performace testing:
+    stage: performance testing
+    variables:
+        GIT_STRATEGY: clone
+    script:
+        - chmod -R 777 ./performace_testing_script/
+        - docker run --rm -v $(pwd)/performace_testing_script:/performace_testing_script loadimpact/k6 run /performace_testing_script/smoke-test.js
+        - mv ./performace_testing_script/summary.html $(pwd)/$K6_PERFORMACE_TEST_REPORT.html
+    after_script:
+        - sudo chown -R gitlab-runner $(pwd)
+    tags:
+        - deploy-shell
+    only:
+        - tags
+    artifacts:
+        paths:
+        - $K6_PERFORMACE_TEST_REPORT.html
+        expire_in: 1 day
