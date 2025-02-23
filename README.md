@@ -4,6 +4,8 @@ A CI/CD pipeline that automates security scanning, building, testing, and deploy
 
 ## Pipeline Overview
 
+![Pipeline Overview](https://github.com/nvicuong/simple-cicd/blob/main/images/pipeline.png)
+
 The pipeline consists of the following stages:
 
 1. **Static Application Security Testing (SAST)**: Scans the source code for security vulnerabilities.
