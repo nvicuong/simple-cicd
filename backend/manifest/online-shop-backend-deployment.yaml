@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: online-shop-backend
+  name: online-shop-backend-deployment
+  namespace: online-shop
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: online-shop-backend
+  template:
+    metadata:
+      labels:
+        app: online-shop-backend
+    spec:
+      containers:
+        - envFrom:
+            - secretRef:
+                name: database-connection-secret
+          image: dynamic_image
+          name: online-shop-backend
+          ports:
+            - containerPort: 5214
+              protocol: TCP
+          resources:
+            requests:
+              memory: 256Mi
+      imagePullSecrets:
+        - name: auth-harbor-registry
+

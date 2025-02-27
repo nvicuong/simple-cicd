@@ -13,14 +13,16 @@ The pipeline consists of the following stages:
 3. **Build**: Compiles the application and prepares the artifact.
 4. **Artifact and Registry**: Stores the built artifact and container image.
 5. **Scan Image**: Performs vulnerability scanning on the container image.
-6. **Deploy Container**: Deploys the containerized application.
+6. **Deploy on K8s**: Deploys the containerized application on K8s.
 7. **Dynamic Application Security Testing (DAST)**: Conducts runtime security tests.
 8. **Performance Testing**: Evaluates system performance under different conditions.
 9. **Report to Telegram**: Sends test results to a Telegram chat.
 
 ## Technologies Used
 
+- **automating deployment platform**: Kubernetes
 - **Git Server**: Gitlab.
+- **GitOps**: Argo
 - **CI/CD Tool**: GitLab CI/CD, Jenkins.
 - **Security Tools**: 
   - SAST: Trivy

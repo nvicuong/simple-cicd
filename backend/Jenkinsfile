@@ -102,17 +102,26 @@ pipeline {
             }    
         }
 
+        // stage('deploy') {
+        //     options {
+        //         skipDefaultCheckout(true)
+        //     }
+        //     steps {
+        //         withCredentials([usernamePassword(credentialsId: 'CI_REGISTRY_CREDENTIAL', usernameVariable: 'CI_REGISTRY_USER', passwordVariable: 'CI_REGISTRY_PASS')]) {
+        //                 sh(script: """docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASS} ${CI_REGISTRY_URL}""")
+        //             }
+
+        //         sh(script: """sudo su ${PROJECT_USER} -c 'docker pull ${DOCKER_IMAGE_NAME_AND_TAG}; docker rm -f ${CI_PROJECT_NAME}; docker run --name ${CI_PROJECT_NAME} -dp ${BE_PORT}:${BE_PORT} ${DOCKER_IMAGE_NAME_AND_TAG} '""")
+        //         sh(script: """docker logout ${CI_REGISTRY_URL}""")
+        //     }
+        // }
         stage('deploy') {
             options {
                 skipDefaultCheckout(true)
             }
             steps {
-                withCredentials([usernamePassword(credentialsId: 'CI_REGISTRY_CREDENTIAL', usernameVariable: 'CI_REGISTRY_USER', passwordVariable: 'CI_REGISTRY_PASS')]) {
-                        sh(script: """docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASS} ${CI_REGISTRY_URL}""")
-                    }
-
-                sh(script: """sudo su ${PROJECT_USER} -c 'docker pull ${DOCKER_IMAGE_NAME_AND_TAG}; docker rm -f ${CI_PROJECT_NAME}; docker run --name ${CI_PROJECT_NAME} -dp ${BE_PORT}:${BE_PORT} ${DOCKER_IMAGE_NAME_AND_TAG} '""")
-                sh(script: """docker logout ${CI_REGISTRY_URL}""")
+                sh(script: """sed -i "s|dynamic_image|${DOCKER_IMAGE_NAME_AND_TAG}|" ./manifest/online-shop-backend-deployment.yaml""")
+                sh(script: """kubectl apply -f ./manifest/online-shop-backend-deployment.yaml""")
             }
         }
         stage('send reports') {

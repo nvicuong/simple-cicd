@@ -1,8 +1,8 @@
 export const variables = {
-  BASE_URL: "http://192.168.233.130:5214/api/",
-  USER_API: "http://192.168.233.130:5214/api/user",
-  PRODUCT_API: "http://192.168.233.130:5214/api/product",
-  ORDER_API: "http://192.168.233.130:5214/api/order",
-  PRODUCTSIZE_API: "http://192.168.233.130:5214/api/productsize",
-  ORDERITEM_API: "http://192.168.233.130:5214/api/orderitem",
+  BASE_URL: "http://api-online-shop.cuongnv.tech/api/",
+  USER_API: "http://api-online-shop.cuongnv.tech/api/user",
+  PRODUCT_API: "http://api-online-shop.cuongnv.tech/api/product",
+  ORDER_API: "http://api-online-shop.cuongnv.tech/api/order",
+  PRODUCTSIZE_API: "http://api-online-shop.cuongnv.tech/api/productsize",
+  ORDERITEM_API: "http://api-online-shop.cuongnv.tech/api/orderitem",
 };
